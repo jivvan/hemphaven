@@ -1,0 +1,112 @@
+﻿@model IEnumerable<Product>
+
+<div class="row pb-3">
+    @if (Model.Any(p => p.Category.Name == "Trending"))
+    {
+        var trendingProducts = Model.Where(p => p.Category.Name == "Trending");
+        <div class="col-md-12 mb-4">
+            <div id="trendingCarousel" class="carousel slide" data-ride="carousel" data-interval="4000">
+                <!-- Increased interval to 4 seconds -->
+                <div class="carousel-inner">
+                    @foreach (var product in trendingProducts)
+                    {
+                        <div class="carousel-item @(product == trendingProducts.FirstOrDefault() ? "active" : "")">
+                            <div class="row align-items-center">
+                                <div class="col-md-6">
+                                    <img src="@product.ImageUrl" alt="@product.Title" class="d-block mx-auto img-fluid"
+                                        style="max-width: 100%;"> <!-- Center image horizontally -->
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="text-center text-md-left">
+                                        <h3 class="card-title mb-3 h2" style="font-weight: 600;">@product.Title</h3>
+                                        <p>@Html.Raw(product.Description)</p>
+                                        <p class="text-dark h4 text-center">Price: @product.Price.ToString("c",
+                                    NepaliFormat.GetFormat())</p>
+                                        @if (@product.ListPrice != @product.Price)
+                                        {
+                                            <div class="d-flex gap-2 justify-content-center">
+                                                <p class="text-dark text-opacity-50 text-center">
+                                                    <del>@product.ListPrice.ToString("c", NepaliFormat.GetFormat())</del>
+                                                </p>
+                                                <p class="text-dark text-opacity-75 bg-warning px-2 text-center"
+                                                    style="border-radius: 1rem;">
+                                                    -@Math.Floor(((@product.ListPrice - @product.Price) / @product.ListPrice) *
+                                                            100) %
+                                                </p>
+                                            </div>
+                                        }
+                                        <a asp-action="Details" asp-route-id="@product.Id" class="btn btn-primary btn-lg">View
+                                            Details</a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+                <a class="carousel-control-prev" href="#trendingCarousel" role="button" data-slide="prev">
+                    <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+                    <span class="sr-only">Previous</span>
+                </a>
+                <a class="carousel-control-next" href="#trendingCarousel" role="button" data-slide="next">
+                    <span class="carousel-control-next-icon" aria-hidden="true"></span>
+                    <span class="sr-only">Next</span>
+                </a>
+            </div>
+        </div>
+        <hr />
+    }
+
+
+    @foreach (var category in Model.GroupBy(p => p.Category.Name).Where(g => g.Key != "Trending"))
+    {
+        <div class="col-md-12 mb-4">
+            <h2 class="h1">@category.Key</h2>
+            <div class="row">
+                @foreach (var product in category)
+                {
+                    <div class="col-lg-3 col-sm-6">
+                        <div class="card border-0 p-3 shadow border-top border-5 rounded">
+                            <img src="@product.ImageUrl" alt="@product.Title" class="card-img-top rounded">
+                            <div class="card-body pb-0">
+                                <div class="pl-1">
+                                    <p style="font-weight: 600;"
+                                        class="card-title h5 text-dark opacity-75 text-uppercase text-center">@product.Title
+                                    </p>
+                                </div>
+                                <div>
+                                    @if (@product.ListPrice != @product.Price)
+                                    {
+                                        <div class="d-flex gap-2 justify-content-center">
+                                            <p class="text-dark text-opacity-50 text-center">
+                                                <del>@product.ListPrice.ToString("c", NepaliFormat.GetFormat())</del>
+                                            </p>
+                                            <p class="text-dark text-opacity-75 bg-warning px-2 text-center"
+                                                style="border-radius: 1rem;">
+                                                -@Math.Floor(((@product.ListPrice - @product.Price) / @product.ListPrice) *
+                                                        100) %
+                                            </p>
+                                        </div>
+                                    }
+                                    <p class="text-dark h5 text-center">Price: @product.Price.ToString("c",
+                                NepaliFormat.GetFormat())</p>
+                                </div>
+                            </div>
+                            <div>
+                                <a asp-action="Details" asp-route-id="@product.Id"
+                                    class="btn btn-primary bg-gradient border-0 form-control">Details</a>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@section Scripts {
+    <script>
+        $(document).ready(function () {
+            $('#trendingCarousel').carousel();
+        });
+    </script>
+}
