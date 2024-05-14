@@ -73,7 +73,6 @@ public class CartController : Controller
     [ActionName("Summary")]
     public IActionResult SummaryPOST()
     {
-        Console.WriteLine("test");
         var claimsIdentity = (ClaimsIdentity)User.Identity;
         var userId = claimsIdentity.FindFirst(ClaimTypes.NameIdentifier).Value;
 
@@ -128,7 +127,7 @@ public class CartController : Controller
 
         if (applicationUser.CompanyId.GetValueOrDefault() == 0)
         {
-            var domain = "http://localhost:5080";
+            var domain = Request.Scheme + "://" + Request.Host.Value;
             var options = new SessionCreateOptions
             {
                 SuccessUrl = $"{domain}/customer/cart/OrderConfirmation?id={ShoppingCartVm.OrderHeader.Id}",
@@ -147,14 +146,15 @@ public class CartController : Controller
                         ProductData = new SessionLineItemPriceDataProductDataOptions
                         {
                             Name = item.Product.Title,
-                            Description = item.Product.Description,
-                            Images = [item.Product.ImageUrl]
+                            // Description = item.Product.Description,
+                            // Images = [item.Product.ImageUrl]
                         }
                     },
                     Quantity = item.Count
                 };
                 options.LineItems.Add(sessionLineItem);
             }
+
 
             var service = new SessionService();
             Session session = service.Create(options);
