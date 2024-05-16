@@ -3,8 +3,10 @@ using BulkyWeb.Repository.IRepository;
 using BulkyWeb.Models;
 using System.Security.Claims;
 using BulkyWeb.Utils;
-using Stripe.Checkout;
 using Microsoft.AspNetCore.Authorization;
+using Newtonsoft.Json;
+using System.Text;
+using Newtonsoft.Json.Linq;
 
 namespace BulkyWeb.Areas.Customer.Controllers;
 
@@ -12,6 +14,7 @@ namespace BulkyWeb.Areas.Customer.Controllers;
 [Authorize]
 public class CartController : Controller
 {
+    private readonly IConfiguration _configuration;
     private readonly IUnitOfWork _unitOfWork;
     [BindProperty]
     public ShoppingCartVm ShoppingCartVm { get; set; }
@@ -71,7 +74,7 @@ public class CartController : Controller
 
     [HttpPost]
     [ActionName("Summary")]
-    public IActionResult SummaryPOST()
+    public async Task<IActionResult> SummaryPOST()
     {
         var claimsIdentity = (ClaimsIdentity)User.Identity;
         var userId = claimsIdentity.FindFirst(ClaimTypes.NameIdentifier).Value;
@@ -128,71 +131,109 @@ public class CartController : Controller
         if (applicationUser.CompanyId.GetValueOrDefault() == 0)
         {
             var domain = Request.Scheme + "://" + Request.Host.Value;
-            var options = new SessionCreateOptions
+            var url = "https://a.khalti.com/api/v2/epayment/initiate/";
+            var payload = new
             {
-                SuccessUrl = $"{domain}/customer/cart/OrderConfirmation?id={ShoppingCartVm.OrderHeader.Id}",
-                CancelUrl = $"{domain}/customer/cart/index",
-                LineItems = new List<SessionLineItemOptions>(),
-                Mode = "payment"
-            };
-            foreach (var item in ShoppingCartVm.ShoppingCartList)
-            {
-                var sessionLineItem = new SessionLineItemOptions
+                return_url = $"{domain}/customer/cart/OrderConfirmation",
+                website_url = domain,
+                amount = ShoppingCartVm.OrderHeader.OrderTotal * 100,
+                purchase_order_id = ShoppingCartVm.OrderHeader.Id.ToString(),
+                purchase_order_name = "testtt",
+                customer_info = new
                 {
-                    PriceData = new SessionLineItemPriceDataOptions
-                    {
-                        UnitAmount = (long)(item.Price * 100),
-                        Currency = "npr",
-                        ProductData = new SessionLineItemPriceDataProductDataOptions
-                        {
-                            Name = item.Product.Title,
-                            // Description = item.Product.Description,
-                            // Images = [item.Product.ImageUrl]
-                        }
-                    },
-                    Quantity = item.Count
-                };
-                options.LineItems.Add(sessionLineItem);
+                    name = applicationUser.Name,
+                    email = applicationUser.Email,
+                    phone = applicationUser.PhoneNumber
+                },
+            };
+            var jsonPayload = JsonConvert.SerializeObject(payload);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+            var client = new HttpClient();
+            client.DefaultRequestHeaders.Add("Authorization", "key " + Environment.GetEnvironmentVariable("KHALTI_KEY"));
+
+            try
+            {
+                var response = await client.PostAsync(url, content);
+                var responseContent = await response.Content.ReadAsStringAsync();
+                Console.WriteLine(responseContent);
+                var jsonResponse = JObject.Parse(responseContent);
+                if (!jsonResponse.ContainsKey("pidx"))
+                {
+                    return RedirectToAction(nameof(Summary));
+                }
+                else
+                {
+                    _unitOfWork.OrderHeader.UpdateStripePaymentID(ShoppingCartVm.OrderHeader.Id, jsonResponse["pidx"].ToString(), null);
+                    _unitOfWork.Save();
+
+                    Response.Headers.Add("Location", jsonResponse["payment_url"].ToString());
+                    return new StatusCodeResult(303);
+                }
             }
-
-
-            var service = new SessionService();
-            Session session = service.Create(options);
-            _unitOfWork.OrderHeader.UpdateStripePaymentID(ShoppingCartVm.OrderHeader.Id, session.Id, session.PaymentIntentId);
-            _unitOfWork.Save();
-
-            Response.Headers.Add("Location", session.Url);
-            return new StatusCodeResult(303);
+            catch (HttpRequestException err)
+            {
+                return RedirectToAction(nameof(Summary));
+            }
         }
 
-        return RedirectToAction(nameof(OrderConfirmation), new { id = ShoppingCartVm.OrderHeader.Id });
+        return RedirectToAction(nameof(OrderConfirmation), new
+        {
+            id = ShoppingCartVm.OrderHeader.SessionId
+        });
     }
 
 
-    public IActionResult OrderConfirmation(int id)
+    public async Task<IActionResult> OrderConfirmation(string pidx)
     {
-        var orderHeader = _unitOfWork.OrderHeader.Get(u => u.Id == id, includeProperties: "ApplicationUser");
+        var orderHeader = _unitOfWork.OrderHeader.Get(u => u.SessionId == pidx, includeProperties: "ApplicationUser");
 
         if (orderHeader.PaymentStatus != PAYMENT_STATUS.PaymentStatusDealyedPayment)
         {
-            var service = new SessionService();
-            Session session = service.Get(orderHeader.SessionId);
-
-            if (session.PaymentStatus.ToLower() == "paid")
+            var domain = Request.Scheme + "://" + Request.Host.Value;
+            var url = "https://a.khalti.com/api/v2/epayment/lookup/";
+            var payload = new
             {
-                _unitOfWork.OrderHeader.UpdateStripePaymentID(orderHeader.Id, session.Id, session.PaymentIntentId);
-                _unitOfWork.OrderHeader.UpdateStatus(id, ORDER_STATUS.OrderStatusApproved, PAYMENT_STATUS.PaymentStatusApproved);
-                _unitOfWork.Save();
+                pidx = orderHeader.SessionId
+            };
+            var jsonPayload = JsonConvert.SerializeObject(payload);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+            var client = new HttpClient();
+            client.DefaultRequestHeaders.Add("Authorization", "key " + Environment.GetEnvironmentVariable("KHALTI_KEY"));
+            try
+            {
+                var response = await client.PostAsync(url, content);
+                var responseContent = await response.Content.ReadAsStringAsync();
+                Console.WriteLine(responseContent);
+                Console.WriteLine("HELOOOOOOOO");
+                var jsonResponse = JObject.Parse(responseContent);
+                if (jsonResponse.ContainsKey("status"))
+                {
+                    if (jsonResponse["status"].ToString().ToLower() == "completed")
+                    {
+                        _unitOfWork.OrderHeader.UpdateStripePaymentID(orderHeader.Id, jsonResponse["pidx"].ToString(), jsonResponse["transaction_id"].ToString());
+                        _unitOfWork.OrderHeader.UpdateStatus(orderHeader.Id, ORDER_STATUS.OrderStatusApproved, PAYMENT_STATUS.PaymentStatusApproved);
+                        _unitOfWork.Save();
+                    }
+                }
+                else
+                {
+                    TempData["error"] = "Internal server error.";
+                    return RedirectToAction(nameof(Summary));
+                }
+            }
+            catch (HttpRequestException)
+            {
+                return RedirectToAction(nameof(Summary));
             }
         }
-
         List<ShoppingCart> shoppingCarts = _unitOfWork.ShoppingCart.GetAll(u => u.ApplicationUserId == orderHeader.ApplicationUserId).ToList();
 
         _unitOfWork.ShoppingCart.RemoveRange(shoppingCarts);
         _unitOfWork.Save();
 
-        return View(id);
+        return View(orderHeader.Id);
     }
+
 
     public IActionResult Plus(int cartId)
     {
